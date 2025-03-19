@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to automatically start and stop CloudWatch alarms for a Redshift cluster'
+
+Parameters:
+  RedshiftClusterName:
+    Type: String
+    Description: Name of the Redshift cluster whose alarms will be managed
+
+Resources:
+  # IAM Role for EventBridge to use AWS API actions
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchAlarmsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'cloudwatch:DisableAlarmActions'
+                  - 'cloudwatch:EnableAlarmActions'
+                  - 'cloudwatch:DescribeAlarms'
+                Resource: '*'
+
+  # Schedule to enable Redshift alarms at 11:32 AM UTC
+  EnableAlarmsSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub "${RedshiftClusterName}-enable-alarms-schedule"
+      Description: "Schedule to enable CloudWatch alarms for Redshift cluster at 11:32 AM UTC"
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      ScheduleExpression: "cron(32 11 * * ? *)"
+      ScheduleExpressionTimezone: "UTC"
+      State: "ENABLED"
+      Target:
+        Arn: "arn:aws:scheduler:::aws-sdk:cloudwatch:enableAlarmActions"
+        RoleArn: !GetAtt EventBridgeRole.Arn
+        Input: !Sub |
+          {
+            "AlarmNames": [
+              "${RedshiftClusterName}-CPUUtilization-alarm",
+              "${RedshiftClusterName}-PercentageDiskSpaceUsed-alarm"
+            ]
+          }
+
+  # Schedule to disable Redshift alarms at 11:58 PM UTC
+  DisableAlarmsSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub "${RedshiftClusterName}-disable-alarms-schedule"
+      Description: "Schedule to disable CloudWatch alarms for Redshift cluster at 11:58 PM UTC"
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      ScheduleExpression: "cron(58 23 * * ? *)"
+      ScheduleExpressionTimezone: "UTC"
+      State: "ENABLED"
+      Target:
+        Arn: "arn:aws:scheduler:::aws-sdk:cloudwatch:disableAlarmActions"
+        RoleArn: !GetAtt EventBridgeRole.Arn
+        Input: !Sub |
+          {
+            "AlarmNames": [
+              "${RedshiftClusterName}-CPUUtilization-alarm",
+              "${RedshiftClusterName}-PercentageDiskSpaceUsed-alarm"
+            ]
+          }
+
+Outputs:
+  EnableAlarmsScheduleArn:
+    Description: ARN of the schedule that enables alarms
+    Value: !GetAtt EnableAlarmsSchedule.Arn
+  
+  DisableAlarmsScheduleArn:
+    Description: ARN of the schedule that disables alarms
+    Value: !GetAtt DisableAlarmsSchedule.Arn
